@@ -258,7 +258,7 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
                     sb.append("]: ");
                 }
                 if (msg.content != null) {
-                    sb.append(msg.content.format(new CopyFormatter(mActivity), null).toSpanned());
+                    sb.append(msg.content.format(new CopyFormatter(mActivity)).toSpanned());
                 }
                 sb.append("; ").append(UiUtils.shortDate(msg.ts));
             }
@@ -347,7 +347,7 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
             toggleSelectionAt(pos);
             notifyItemChanged(pos);
             updateSelectionMode();
-            Drafty transformed = msg.content.preview(UiUtils.QUOTED_REPLY_LENGTH, new ReplyTransformer());
+            Drafty transformed = msg.content.preview(UiUtils.QUOTED_REPLY_LENGTH);
             Drafty reply = Drafty.quote(messageFrom(msg), msg.from, transformed);
             mActivity.showReply(reply, msg.seq);
         }
@@ -364,7 +364,7 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
             String uname = "➦ " + messageFrom(msg);
             String from = msg.from != null ? msg.from : mTopicName;
             Drafty content = Drafty.mention(uname, from)
-                    .appendLineBreak().append(msg.content.contentToForward());
+                    .appendLineBreak().append(msg.content.forwardedContent());
             args.putSerializable(ForwardToFragment.CONTENT_TO_FORWARD, content);
             args.putString(ForwardToFragment.FORWARDING_FROM_TOPIC, mTopicName);
             ForwardToFragment fragment = new ForwardToFragment();
