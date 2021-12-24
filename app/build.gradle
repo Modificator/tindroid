@@ -9,7 +9,7 @@ def keystoreProperties = new Properties()
 keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 
 android {
-    compileSdkVersion 30
+    compileSdkVersion 31
 
     signingConfigs {
         release {
@@ -23,7 +23,7 @@ android {
     defaultConfig {
         applicationId "co.tinode.tindroidx"
         minSdkVersion 21
-        targetSdkVersion 30
+        targetSdkVersion 31
         vectorDrawables.useSupportLibrary = true
 
         // If you are getting errors due to git not being setup comment out lines gitVersion*()
@@ -94,4 +94,10 @@ dependencies {
     implementation 'com.squareup.picasso:picasso:2.8'
 
     annotationProcessor 'androidx.lifecycle:lifecycle-common-java8:2.4.0'
+
+    def emoji2_version = "1.0.1"
+
+    implementation "androidx.emoji2:emoji2:$emoji2_version"
+    implementation "androidx.emoji2:emoji2-views:$emoji2_version"
+    implementation "androidx.emoji2:emoji2-views-helper:$emoji2_version"
 }
