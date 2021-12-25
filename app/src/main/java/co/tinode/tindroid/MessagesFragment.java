@@ -51,7 +51,7 @@ import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 import co.tinode.tindroid.db.BaseDb;
 import co.tinode.tindroid.db.StoredTopic;
-import co.tinode.tindroid.format.ReplyFormatter;
+import co.tinode.tindroid.format.SendPreviewFormatter;
 import co.tinode.tindroid.media.VxCard;
 import co.tinode.tinodesdk.ComTopic;
 import co.tinode.tinodesdk.PromisedReply;
@@ -826,15 +826,13 @@ public class MessagesFragment extends Fragment {
         activity.findViewById(R.id.sendMessagePanel).setVisibility(View.VISIBLE);
         activity.findViewById(R.id.replyPreviewWrapper).setVisibility(View.VISIBLE);
         TextView replyHolder = activity.findViewById(R.id.contentPreview);
-        ReplyFormatter formatter = new ReplyFormatter(replyHolder, false);
-        replyHolder.setText(formatter.toSpanned(reply));
+        replyHolder.setText(reply.format(new SendPreviewFormatter(replyHolder, false)));
     }
 
     private void showForwardedContent(Activity activity, Drafty content) {
         activity.findViewById(R.id.sendMessagePanel).setVisibility(View.GONE);
         TextView previewHolder = activity.findViewById(R.id.forwardedContentPreview);
-        ReplyFormatter formatter = new ReplyFormatter(previewHolder, true);
-        previewHolder.setText(formatter.toSpanned(content));
+        previewHolder.setText(content.format(new SendPreviewFormatter(previewHolder, true)));
         activity.findViewById(R.id.forwardMessagePanel).setVisibility(View.VISIBLE);
     }
 
