@@ -16,7 +16,7 @@ public class DraftyTest {
                 new Drafty.Style("EM", 23, 6),
                 new Drafty.Style("DL", 31, 6)
         };
-        assertEquals("String 1 has failed", expected, actual);
+        assertEquals("Parse 1 has failed", expected, actual);
 
         // Basic formatting over Unicode string 2.
         actual = Drafty.parse("Это *жЫрный*, `код` и _наклонный_, ~зачеркнутый~");
@@ -27,18 +27,18 @@ public class DraftyTest {
                 new Drafty.Style("EM", 18, 9),
                 new Drafty.Style("DL", 29, 11),
         };
-        assertEquals("String 2 has failed", expected, actual);
+        assertEquals("Parse 2 has failed", expected, actual);
 
-        // String 3
+        // Nested formats, string 3
         actual = Drafty.parse("combined *bold and _italic_*");
         expected = new Drafty("combined bold and italic");
         expected.fmt = new Drafty.Style[]{
                 new Drafty.Style("EM", 18, 6),
                 new Drafty.Style("ST", 9, 15)
         };
-        assertEquals("String 3 has failed", expected, actual);
+        assertEquals("Parse 3 has failed", expected, actual);
 
-        // String 4
+        // URL, string 4
         actual = Drafty.parse("an url: https://www.example.com/abc#fragment and another _www.tinode.co_");
         expected = new Drafty("an url: https://www.example.com/abc#fragment and another www.tinode.co");
         expected.fmt = new Drafty.Style[]{
@@ -52,9 +52,9 @@ public class DraftyTest {
                 new Drafty.Entity("LN")
                         .putData("url", "http://www.tinode.co")
         };
-        assertEquals("String 4 has failed", expected, actual);
+        assertEquals("Parse 4 has failed", expected, actual);
 
-        // String 5
+        // Mention, string 5
         actual = Drafty.parse("this is a @mention and a #hashtag in a string");
         expected = new Drafty("this is a @mention and a #hashtag in a string");
         expected.fmt = new Drafty.Style[]{
@@ -65,9 +65,9 @@ public class DraftyTest {
                 new Drafty.Entity("MN").putData("val", "@mention"),
                 new Drafty.Entity("HT").putData("val", "#hashtag"),
         };
-        assertEquals("String 5 has failed", expected.toPlainText(), actual.toPlainText());
+        assertEquals("Parse 5 has failed", expected, actual);
 
-        // String 6
+        // String 6: Unicode UTF16
         actual = Drafty.parse("second #юникод");
         expected = new Drafty("second #юникод");
         expected.fmt = new Drafty.Style[]{
@@ -76,7 +76,15 @@ public class DraftyTest {
         expected.ent = new Drafty.Entity[]{
                 new Drafty.Entity("HT").putData("val", "#юникод"),
         };
-        assertEquals("String 6 has failed", expected.toPlainText(), actual.toPlainText());
+        assertEquals("Parse 6 has failed", expected, actual);
+
+        // String 7: Unicode emoji UTF32
+        actual = Drafty.parse("😀 *b1👩🏽‍✈️b2* smile");
+        expected = new Drafty("😀 b1👩🏽‍✈️b2 smile");
+        expected.fmt = new Drafty.Style[]{
+                new Drafty.Style("ST", 2, 5),
+        };
+        assertEquals("Parse 7 - Unicode UTF32 emoji failed", expected, actual);
     }
 
     @Test
@@ -278,6 +286,22 @@ public class DraftyTest {
                     .putData("val", "usr123abcDE")
         };
         assertEquals("Shorten 10 has failed", expected, actual);
+
+        // Emoji 1
+        src = Drafty.fromPlainText("a😀c😀d😀e😀f");
+        actual = src.shorten(5, false);
+        expected = Drafty.fromPlainText("a😀c😀…");
+        assertEquals("Shorten Emoji 1 has failed", expected, actual);
+
+        // Emoji 2. It's a medium-dark-skinned female pilot, 4 code points: 👩🏽‍✈
+        src = Drafty.fromPlainText("😀 b1👩🏽‍✈️b2 smile");
+        actual = src.shorten(8, false);
+        expected = Drafty.fromPlainText("😀 b1👩🏽‍✈️b…");
+        expected.fmt = new Drafty.Style[]{
+                new Drafty.Style("ST", 2, 5),
+                new Drafty.Style("EM", 0, 6)
+        };
+        assertEquals("Shorten Emoji 2 has failed", expected, actual);
     }
 
     @Test
@@ -475,6 +499,34 @@ public class DraftyTest {
                         .putData("name", "hello.jpg"),
         };
         assertEquals("Reply 4 has failed", expected, actual);
+
+        // ------- Reply 5 (inline image)
+        src = new Drafty(" ");
+        src.fmt = new Drafty.Style[]{
+                new Drafty.Style(0, 1, 0),
+        };
+        src.ent = new Drafty.Entity[]{
+                new Drafty.Entity("IM")
+                        .putData("height", 213)
+                        .putData("width", 638)
+                        .putData("name", "roses.jpg")
+                        .putData("val", "<38992, 123456789012345678901234567890123456789012345678901234567890 bytes: ...>")
+                        .putData("mime", "image/jpeg"),
+        };
+        actual = src.replyContent(25, 3);
+        expected = new Drafty(" ");
+        expected.fmt = new Drafty.Style[]{
+                new Drafty.Style(0, 1, 0),
+        };
+        expected.ent = new Drafty.Entity[]{
+                new Drafty.Entity("IM")
+                        .putData("height", 213)
+                        .putData("width", 638)
+                        .putData("name", "roses.jpg")
+                        .putData("val", "<38992, 123456789012345678901234567890123456789012345678901234567890 bytes: ...>")
+                        .putData("mime", "image/jpeg"),
+        };
+        assertEquals("Reply 5 has failed", expected, actual);
     }
 
     @Test

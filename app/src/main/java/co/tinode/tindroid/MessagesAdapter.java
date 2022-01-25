@@ -9,8 +9,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.database.Cursor;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
@@ -27,9 +25,11 @@ import android.text.style.StyleSpan;
 import android.util.Base64;
 import android.util.Log;
 import android.util.SparseBooleanArray;
+import android.view.GestureDetector;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
@@ -65,7 +65,9 @@ import co.tinode.tindroid.db.BaseDb;
 import co.tinode.tindroid.db.MessageDb;
 import co.tinode.tindroid.db.StoredMessage;
 import co.tinode.tindroid.format.CopyFormatter;
-import co.tinode.tindroid.format.SpanFormatter;
+import co.tinode.tindroid.format.FullFormatter;
+import co.tinode.tindroid.format.QuoteFormatter;
+import co.tinode.tindroid.format.ThumbnailTransformer;
 import co.tinode.tindroid.media.VxCard;
 import co.tinode.tinodesdk.ComTopic;
 import co.tinode.tinodesdk.PromisedReply;
@@ -347,9 +349,20 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
             toggleSelectionAt(pos);
             notifyItemChanged(pos);
             updateSelectionMode();
-            Drafty transformed = msg.content.preview(UiUtils.QUOTED_REPLY_LENGTH);
-            Drafty reply = Drafty.quote(messageFrom(msg), msg.from, transformed);
-            mActivity.showReply(reply, msg.seq);
+            ThumbnailTransformer tr = new ThumbnailTransformer();
+            Drafty replyContent = msg.content.replyContent(UiUtils.QUOTED_REPLY_LENGTH, 1).transform(tr);
+            tr.completionPromise().thenApply(new PromisedReply.SuccessListener<Void>() {
+                @Override
+                public PromisedReply<Void> onSuccess(Void result) {
+                    mActivity.runOnUiThread(() -> {
+                        Drafty reply = Drafty.quote(messageFrom(msg), msg.from, replyContent);
+                        mActivity.showReply(reply, msg.seq);
+                    });
+                    return null;
+                }
+            });
+        } else {
+            Toast.makeText(mActivity, R.string.cannot_reply, Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -363,9 +376,8 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
             Bundle args = new Bundle();
             String uname = "➦ " + messageFrom(msg);
             String from = msg.from != null ? msg.from : mTopicName;
-            Drafty content = Drafty.mention(uname, from)
-                    .appendLineBreak().append(msg.content.forwardedContent());
-            args.putSerializable(ForwardToFragment.CONTENT_TO_FORWARD, content);
+            args.putSerializable(ForwardToFragment.CONTENT_TO_FORWARD, msg.content.forwardedContent());
+            args.putSerializable(ForwardToFragment.FORWARDING_FROM_USER, Drafty.mention(uname, from));
             args.putString(ForwardToFragment.FORWARDING_FROM_TOPIC, mTopicName);
             ForwardToFragment fragment = new ForwardToFragment();
             fragment.setArguments(args);
@@ -492,9 +504,10 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
 
         mSpanFormatterClicker.setPosition(position);
         // Disable clicker while message is processed.
-        SpanFormatter formatter = new SpanFormatter(holder.mText, uploadingAttachment ? null : mSpanFormatterClicker);
+        FullFormatter formatter = new FullFormatter(holder.mText, uploadingAttachment ? null : mSpanFormatterClicker);
+        formatter.setQuoteFormatter(new QuoteFormatter(holder.mText, holder.mText.getTextSize()));
         Spanned text = m.content.format(formatter);
-        if (text.length() == 0) {
+        if (text == null || text.length() == 0) {
             if (m.status == BaseDb.Status.DRAFT || m.status == BaseDb.Status.QUEUED || m.status == BaseDb.Status.SENDING) {
                 text = serviceContentSpanned(mActivity, R.drawable.ic_schedule_gray, R.string.processing);
             } else if (m.status == BaseDb.Status.FAILED) {
@@ -506,12 +519,17 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
 
         holder.mText.setText(text);
         if (m.content != null && m.content.hasEntities(Arrays.asList("BN", "LN", "MN", "HT", "IM", "EX"))) {
-            // Sole spans are clickable.
+            // Some spans are clickable.
+            holder.mText.setOnTouchListener((v, ev) -> {
+                holder.mGestureDetector.onTouchEvent(ev);
+                return false;
+            });
             holder.mText.setMovementMethod(LinkMovementMethod.getInstance());
             holder.mText.setLinksClickable(true);
             holder.mText.setFocusable(true);
             holder.mText.setClickable(true);
         } else {
+            holder.mText.setOnTouchListener(null);
             holder.mText.setMovementMethod(null);
             holder.mText.setLinksClickable(false);
             holder.mText.setFocusable(false);
@@ -607,13 +625,17 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
                 notifyItemChanged(pos);
                 updateSelectionMode();
             } else {
+                int replySeq = -1;
                 try {
-                    int replySeq = Integer.parseInt(m.getStringHeader("reply"));
-                    if (replySeq != -1) {
-                        final int pos = findInCursor(mCursor, replySeq);
-                        if (pos >= 0) {
+                    replySeq = Integer.parseInt(m.getStringHeader("reply"));
+                } catch (NumberFormatException ignored) {}
+                if (replySeq != -1) {
+                    // A reply message was clicked. Scroll original into view and animate.
+                    final int pos = findInCursor(mCursor, replySeq);
+                    if (pos >= 0) {
+                        StoredMessage mm = getMessage(pos);
+                        if (mm != null) {
                             LinearLayoutManager lm = (LinearLayoutManager) mRecyclerView.getLayoutManager();
-                            StoredMessage mm = getMessage(pos);
                             if (lm != null &&
                                     pos >= lm.findFirstCompletelyVisibleItemPosition() &&
                                     pos <= lm.findLastCompletelyVisibleItemPosition()) {
@@ -640,7 +662,7 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
                             }
                         }
                     }
-                } catch (NumberFormatException ignored) {}
+                }
             }
         });
     }
@@ -883,12 +905,13 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
         final TextView mMeta;
         final TextView mUserName;
         final View mSelected;
-        final View mOverlay;
+        final View mRippleOverlay;
         final View mProgressContainer;
         final ProgressBar mProgressBar;
         final AppCompatImageButton mCancelProgress;
         final View mProgress;
         final View mProgressResult;
+        final GestureDetector mGestureDetector;
 
         ViewHolder(View itemView, int viewType) {
             super(itemView);
@@ -902,12 +925,31 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
             mMeta = itemView.findViewById(R.id.messageMeta);
             mUserName = itemView.findViewById(R.id.userName);
             mSelected = itemView.findViewById(R.id.selected);
-            mOverlay = itemView.findViewById(R.id.overlay);
+            mRippleOverlay = itemView.findViewById(R.id.overlay);
             mProgressContainer = itemView.findViewById(R.id.progressContainer);
             mProgress = itemView.findViewById(R.id.progressPanel);
             mProgressBar = itemView.findViewById(R.id.attachmentProgressBar);
             mCancelProgress = itemView.findViewById(R.id.attachmentProgressCancel);
             mProgressResult = itemView.findViewById(R.id.progressResult);
+            mGestureDetector = new GestureDetector(itemView.getContext(),
+                    new GestureDetector.SimpleOnGestureListener() {
+                        @Override
+                        public void onLongPress(MotionEvent ev) {
+                            itemView.performLongClick();
+                        }
+
+                        @Override
+                        public boolean onSingleTapConfirmed(MotionEvent ev) {
+                            itemView.performClick();
+                            return super.onSingleTapConfirmed(ev);
+                        }
+
+                        @Override
+                        public void onShowPress(MotionEvent ev) {
+                            mRippleOverlay.setPressed(true);
+                            mRippleOverlay.postDelayed(() -> mRippleOverlay.setPressed(false), 250);
+                        }
+                    });
         }
     }
 
@@ -943,7 +985,7 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
         }
     }
 
-    class SpanClicker implements SpanFormatter.ClickListener {
+    class SpanClicker implements FullFormatter.ClickListener {
         private int mPosition = -1;
 
         void setPosition(int pos) {
@@ -953,9 +995,6 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
         @Override
         public void onClick(String type, Map<String, Object> data) {
             if (mSelectedItems != null) {
-                toggleSelectionAt(mPosition);
-                notifyItemChanged(mPosition);
-                updateSelectionMode();
                 return;
             }
 
@@ -986,7 +1025,7 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
                             // URL is null when the image is not sent yet.
                             if (url != null) {
                                 args = new Bundle();
-                                args.putParcelable(AttachmentHandler.ARG_SRC_REMOTE_URI, Uri.parse(url.toString()));
+                                args.putParcelable(AttachmentHandler.ARG_REMOTE_URI, Uri.parse(url.toString()));
                             }
                         }
 
@@ -1105,54 +1144,6 @@ public class MessagesAdapter extends RecyclerView.Adapter<MessagesAdapter.ViewHo
                     }
                     break;
             }
-        }
-    }
-
-    // Convert Drafty into short preview with images converted into thumbnails for use in replies.
-    private static class ReplyTransformer extends Drafty.PreviewTransformer {
-        public ReplyTransformer() {
-            super(false);
-        }
-
-        @Nullable
-        @Override
-        public Drafty.Node transform(@NonNull Drafty.Node node) {
-            if (!node.isStyle("IM")) {
-                return super.transform(node);
-            }
-
-            // Create an image thumbnail.
-            Drafty.Node conv = new Drafty.Node(node);
-            conv.resetData();
-            conv.putData("name", node.getData("name"));
-            conv.putData("width", UiUtils.REPLY_THUMBNAIL_SIZE);
-            conv.putData("height", UiUtils.REPLY_THUMBNAIL_SIZE);
-
-            Object val = node.getData("val");
-            byte[] bits = null;
-            if (val instanceof byte[]) {
-                bits = (byte[]) val;
-            } else if (val instanceof String) {
-                try {
-                    bits = Base64.decode((String) val, Base64.DEFAULT);
-                } catch (IllegalArgumentException ignored) {}
-            }
-            if (bits != null) {
-                Bitmap bmp = BitmapFactory.decodeByteArray(bits, 0, bits.length);
-                if (bmp != null) {
-                    bmp = UiUtils.scaleSquareBitmap(bmp, UiUtils.REPLY_THUMBNAIL_SIZE);
-                    bits = UiUtils.bitmapToBytes(bmp, "image/jpeg");
-                    conv.putData("val", bits);
-                    conv.putData("mime", "image/jpeg");
-                    conv.putData("size", bits.length);
-                }
-            } else {
-                conv.putData("ref", node.getData("ref"));
-                conv.putData("mime", node.getData("mime"));
-                conv.putData("size", node.getData("size"));
-            }
-
-            return conv;
         }
     }
 }

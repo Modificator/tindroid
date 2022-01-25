@@ -34,6 +34,7 @@ import android.widget.TextView;
 import java.net.URL;
 import java.util.List;
 import java.util.Map;
+import java.util.Stack;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.content.res.AppCompatResources;
@@ -44,7 +45,7 @@ import co.tinode.tindroid.UiUtils;
 /**
  * Convert Drafty object into a Spanned object with full support for all features.
  */
-public class SpanFormatter extends AbstractDraftyFormatter<SpannableStringBuilder> {
+public class FullFormatter extends AbstractDraftyFormatter<SpannableStringBuilder> {
     private static final String TAG = "SpanFormatter";
 
     private static final float FORM_LINE_SPACING = 1.2f;
@@ -68,14 +69,16 @@ public class SpanFormatter extends AbstractDraftyFormatter<SpannableStringBuilde
     private final int mViewport;
     private final float mFontSize;
     private final ClickListener mClicker;
+    private QuoteFormatter mQuoteFormatter;
 
-    public SpanFormatter(final TextView container, final ClickListener clicker) {
+    public FullFormatter(final TextView container, final ClickListener clicker) {
         super(container.getContext());
 
         mContainer = container;
         mViewport = container.getMaxWidth();
         mFontSize = container.getTextSize();
         mClicker = clicker;
+        mQuoteFormatter = null;
 
         Resources res = container.getResources();
         if (sColorsDark == null) {
@@ -85,8 +88,22 @@ public class SpanFormatter extends AbstractDraftyFormatter<SpannableStringBuilde
     }
 
     @Override
+    public SpannableStringBuilder apply(final String tp, final Map<String, Object> data,
+                                        final List<SpannableStringBuilder> content, Stack<String> context) {
+        if (context != null && context.contains("QQ") && mQuoteFormatter != null) {
+            return mQuoteFormatter.apply(tp, data, content, context);
+        }
+
+        return super.apply(tp, data, content, context);
+    }
+
+    @Override
     public SpannableStringBuilder wrapText(CharSequence text) {
         return text != null ? new SpannableStringBuilder(text) : null;
+    }
+
+    public void setQuoteFormatter(QuoteFormatter quoteFormatter) {
+        mQuoteFormatter = quoteFormatter;
     }
 
     // Scale image dimensions to fit under the given viewport size.
@@ -295,8 +312,8 @@ public class SpanFormatter extends AbstractDraftyFormatter<SpannableStringBuilde
                 }
                 Drawable onError = UiUtils.getPlaceholder(ctx, fg, bg, scaledWidth, scaledHeight);
 
-                span = new UrlImageSpan(mContainer, scaledWidth, scaledHeight, false, placeholder, onError);
-                ((UrlImageSpan) span).load(Cache.getTinode().toAbsoluteURL(ref));
+                span = new RemoteImageSpan(mContainer, scaledWidth, scaledHeight, false, placeholder, onError);
+                ((RemoteImageSpan) span).load(Cache.getTinode().toAbsoluteURL(ref));
             }
         }
 
@@ -423,6 +440,8 @@ public class SpanFormatter extends AbstractDraftyFormatter<SpannableStringBuilde
 
         // Add space on the left to make the link appear under the file name.
         result.append(saveLink, new LeadingMarginSpan.Standard(bounds.width()), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        // Append thin space after the link, otherwise the whole line to the right is clickable.
+        result.append('\u2009');
         return result;
     }
 
@@ -437,7 +456,7 @@ public class SpanFormatter extends AbstractDraftyFormatter<SpannableStringBuilde
         // Size of a DIP pixel.
         float dipSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 1.0f, metrics);
 
-        // Create BorderSpan.
+        // Make button clickable.
         final SpannableStringBuilder node = new SpannableStringBuilder();
         node.append(join(content), new URLSpan("") {
             @Override
@@ -447,16 +466,18 @@ public class SpanFormatter extends AbstractDraftyFormatter<SpannableStringBuilde
                 }
             }
         }, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        // URLSpan into ButtonSpan.
         node.setSpan(new ButtonSpan(ctx, mFontSize, dipSize), 0, node.length(),
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        return node;
+        // Append a thin space after a button, otherwise the whole line after the button
+        // becomes clickable if the button is the last element in a line.
+        return node.append('\u2009');
     }
 
     static SpannableStringBuilder handleQuote_Impl(Context ctx, List<SpannableStringBuilder> content) {
         SpannableStringBuilder outer = new SpannableStringBuilder();
         SpannableStringBuilder inner = new SpannableStringBuilder();
         inner.append("\n", new RelativeSizeSpan(0.25f), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        // TODO: make clickable.
         inner.append(join(content));
         // Adding a line break with some non-breaking white space around it to create extra padding.
         inner.append("\u00A0\u00A0\u00A0\u00A0\n\u00A0", new RelativeSizeSpan(0.2f),

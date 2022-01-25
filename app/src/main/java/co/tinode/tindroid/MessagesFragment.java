@@ -51,7 +51,8 @@ import androidx.work.WorkInfo;
 import androidx.work.WorkManager;
 import co.tinode.tindroid.db.BaseDb;
 import co.tinode.tindroid.db.StoredTopic;
-import co.tinode.tindroid.format.SendPreviewFormatter;
+import co.tinode.tindroid.format.SendForwardedFormatter;
+import co.tinode.tindroid.format.SendReplyFormatter;
 import co.tinode.tindroid.media.VxCard;
 import co.tinode.tinodesdk.ComTopic;
 import co.tinode.tinodesdk.PromisedReply;
@@ -93,6 +94,7 @@ public class MessagesFragment extends Fragment {
     private int mReplySeqID = -1;
     private Drafty mReply = null;
     private Drafty mContentToForward = null;
+    private Drafty mForwardSender = null;
 
     private PromisedReply.FailureListener<ServerMessage> mFailureListener;
 
@@ -128,7 +130,7 @@ public class MessagesFragment extends Fragment {
                 }
 
                 final Bundle args = new Bundle();
-                args.putParcelable(AttachmentHandler.ARG_SRC_LOCAL_URI, content);
+                args.putParcelable(AttachmentHandler.ARG_LOCAL_URI, content);
                 args.putString(AttachmentHandler.ARG_OPERATION, AttachmentHandler.ARG_OPERATION_FILE);
                 args.putString(AttachmentHandler.ARG_TOPIC_NAME, mTopicName);
                 // Show attachment preview.
@@ -151,12 +153,12 @@ public class MessagesFragment extends Fragment {
                 if (data.getData() == null) {
                     // Image from the camera.
                     args.putString(AttachmentHandler.ARG_FILE_PATH, mCurrentPhotoFile);
-                    args.putParcelable(AttachmentHandler.ARG_SRC_LOCAL_URI, mCurrentPhotoUri);
+                    args.putParcelable(AttachmentHandler.ARG_LOCAL_URI, mCurrentPhotoUri);
                     mCurrentPhotoFile = null;
                     mCurrentPhotoUri = null;
                 } else {
                     // Image from the gallery.
-                    args.putParcelable(AttachmentHandler.ARG_SRC_LOCAL_URI, data.getData());
+                    args.putParcelable(AttachmentHandler.ARG_LOCAL_URI, data.getData());
                 }
 
                 args.putString(AttachmentHandler.ARG_OPERATION,AttachmentHandler.ARG_OPERATION_IMAGE);
@@ -199,6 +201,20 @@ public class MessagesFragment extends Fragment {
 
         mRecyclerView = view.findViewById(R.id.messages_container);
         mRecyclerView.setLayoutManager(mMessageViewLayoutManager);
+        mRecyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(@NonNull RecyclerView recyclerView, int newState) {
+                RecyclerView.Adapter adapter = mRecyclerView.getAdapter();
+                if (adapter == null) {
+                    return;
+                }
+                int itemCount = adapter.getItemCount();
+                int pos = mMessageViewLayoutManager.findLastVisibleItemPosition();
+                if (itemCount - pos < 4) {
+                    ((MessagesAdapter) adapter).loadNextPage();
+                }
+            }
+        });
 
         mRefresher = view.findViewById(R.id.swipe_refresher);
         mMessagesAdapter = new MessagesAdapter(activity, mRefresher);
@@ -389,6 +405,9 @@ public class MessagesFragment extends Fragment {
             return;
         }
 
+        activity.findViewById(R.id.replyPreviewWrapper).setVisibility(View.GONE);
+        activity.findViewById(R.id.forwardMessagePanel).setVisibility(View.GONE);
+
         if (mTopic == null) {
             // Default view when the topic is not available.
             activity.findViewById(R.id.notReadable).setVisibility(View.VISIBLE);
@@ -420,15 +439,17 @@ public class MessagesFragment extends Fragment {
             mReplySeqID = args.getInt(MESSAGE_REPLY_ID);
             mReply = (Drafty) args.getSerializable(MESSAGE_REPLY);
             mContentToForward = (Drafty) args.getSerializable(ForwardToFragment.CONTENT_TO_FORWARD);
+            mForwardSender = (Drafty) args.getSerializable(ForwardToFragment.FORWARDING_FROM_USER);
             // Clear used arguments.
             args.remove(MESSAGE_TO_SEND);
             args.remove(MESSAGE_REPLY_ID);
             args.remove(MESSAGE_REPLY);
             args.remove(ForwardToFragment.CONTENT_TO_FORWARD);
+            args.remove(ForwardToFragment.FORWARDING_FROM_USER);
         }
 
         if (mContentToForward != null) {
-            showForwardedContent(activity, mContentToForward);
+            showContentToForward(activity, mForwardSender, mContentToForward);
         } else if (mTopic.isWriter() && !mTopic.isBlocked()) {
             activity.findViewById(R.id.sendMessageDisabled).setVisibility(View.GONE);
 
@@ -482,6 +503,7 @@ public class MessagesFragment extends Fragment {
             args.putInt(MESSAGE_REPLY_ID, mReplySeqID);
             args.putSerializable(MESSAGE_REPLY, mReply);
             args.putSerializable(ForwardToFragment.CONTENT_TO_FORWARD, mContentToForward);
+            args.putSerializable(ForwardToFragment.FORWARDING_FROM_USER, mForwardSender);
         }
     }
 
@@ -621,7 +643,9 @@ public class MessagesFragment extends Fragment {
                 json.put("action", "report");
                 json.put("target", mTopic.getName());
                 Drafty msg = new Drafty().attachJSON(json);
-                Cache.getTinode().publish(Tinode.TOPIC_SYS, msg, Tinode.draftyHeadersFor(msg));
+                HashMap<String,Object> head = new HashMap<>();
+                head.put("mime", Drafty.MIME_TYPE);
+                Cache.getTinode().publish(Tinode.TOPIC_SYS, msg, head, null);
             } else {
                 throw new IllegalArgumentException("Unexpected action in showChatInvitationDialog");
             }
@@ -776,7 +800,8 @@ public class MessagesFragment extends Fragment {
         }
 
         if (mContentToForward != null) {
-            if (sendMessage(mContentToForward, -1)) {
+            if (sendMessage(mForwardSender.appendLineBreak().append(mContentToForward), -1)) {
+                mForwardSender = null;
                 mContentToForward = null;
             }
             activity.findViewById(R.id.forwardMessagePanel).setVisibility(View.GONE);
@@ -810,6 +835,7 @@ public class MessagesFragment extends Fragment {
         mReplySeqID = -1;
         mReply = null;
         mContentToForward = null;
+        mForwardSender = null;
 
         activity.findViewById(R.id.replyPreviewWrapper).setVisibility(View.GONE);
         activity.findViewById(R.id.forwardMessagePanel).setVisibility(View.GONE);
@@ -817,22 +843,26 @@ public class MessagesFragment extends Fragment {
     }
 
     void showReply(Activity activity, Drafty reply, int seq) {
-        Log.i(TAG, "Show reply: " + reply.toPlainText());
         mReply = reply;
         mReplySeqID = seq;
         mContentToForward = null;
+        mForwardSender = null;
 
         activity.findViewById(R.id.forwardMessagePanel).setVisibility(View.GONE);
         activity.findViewById(R.id.sendMessagePanel).setVisibility(View.VISIBLE);
         activity.findViewById(R.id.replyPreviewWrapper).setVisibility(View.VISIBLE);
         TextView replyHolder = activity.findViewById(R.id.contentPreview);
-        replyHolder.setText(reply.format(new SendPreviewFormatter(replyHolder, false)));
+        replyHolder.setText(reply.format(new SendReplyFormatter(replyHolder)));
     }
 
-    private void showForwardedContent(Activity activity, Drafty content) {
+    private void showContentToForward(Activity activity, Drafty sender, Drafty content) {
+        mReplySeqID = -1;
+        mReply = null;
+
         activity.findViewById(R.id.sendMessagePanel).setVisibility(View.GONE);
         TextView previewHolder = activity.findViewById(R.id.forwardedContentPreview);
-        previewHolder.setText(content.format(new SendPreviewFormatter(previewHolder, true)));
+        content = new Drafty().append(sender).appendLineBreak().append(content.preview(UiUtils.QUOTED_REPLY_LENGTH));
+        previewHolder.setText(content.format(new SendForwardedFormatter(previewHolder)));
         activity.findViewById(R.id.forwardMessagePanel).setVisibility(View.VISIBLE);
     }
 
